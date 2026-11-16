@@ -2,11 +2,11 @@
 
 **Claude Code usage in your Windows tray — plus a ping when Claude finishes or needs you.**
 
+![Tray icon at different levels](docs/icons.png)
+
 The tray icon shows how much of your current 5-hour block you've used. Get a toast (and optionally a phone push) at 85%, when a turn is done, or when Claude Code is waiting for a permission.
 
-```
-pip install usage-tray && usage-tray        # or download UsageTray.exe from Releases
-```
+**Download `UsageTray.exe` from [Releases](https://github.com/swbins/usage-tray/releases)** and run it — no install, no Python needed. Windows 10/11.
 
 - **Meter** — percentage of the current 5-hour block right on the icon (ink → ochre → brick → red), reset time, today / last 7 days, and "at this pace you hit the limit at 15:40".
 - **Limit warning** — one toast at 75 / 85 / 95 % (your pick) and one at 100 %, per block.
@@ -40,6 +40,8 @@ pythonw -m usage_tray
 python -m unittest tests.test_usage_tray
 ```
 
+Build the exe yourself: `pip install pyinstaller && python build_exe.py` → `dist\UsageTray.exe`.
+
 Settings live in `%APPDATA%\UsageTray\settings.json`. `Start with Windows` adds an `HKCU\...\Run` entry; untick it to remove.
 
 MIT License. Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.
@@ -49,6 +51,8 @@ MIT License. Not affiliated with or endorsed by Anthropic. Claude and Claude Cod
 ## 한국어
 
 **윈도우 작업 표시줄 트레이에 Claude Code 사용량 — 그리고 작업이 끝나거나 나를 기다릴 때 알림.**
+
+[Releases](https://github.com/swbins/usage-tray/releases) 에서 `UsageTray.exe` 를 받아 실행하면 끝(설치·파이썬 필요 없음).
 
 - 트레이 아이콘에 이번 5시간 구간을 몇 % 썼는지 숫자로(먹색 → 황토 → 벽돌 → 빨강). 메뉴에 새 구간 시각, 오늘·최근 7일, 「이 속도면 15:40 에 한도」.
 - 75 / 85 / 95 % 중 고른 곳과 100 % 에서 한 번씩 알림.

@@ -132,10 +132,13 @@ def render_icon(pct, alert=85, size=64):
     w, h = box[2] - box[0], box[3] - box[1]
     d.text(((size - w) / 2 - box[0], (size * 0.86 - h) / 2 - box[1]), txt, font=f, fill=(255, 250, 242, 255))
     if pct is not None:
-        bar = int((size - 8) * min(pct, 100) / 100)
-        d.rectangle((4, size - 9, size - 5, size - 5), fill=(255, 250, 242, 90))
+        u = size / 64                                   # drawn at 64 px; scale margins and bar with the size
+        x0, x1 = round(4 * u), size - 1 - round(4 * u)
+        y0, y1 = size - round(9 * u), size - 1 - round(4 * u)
+        d.rectangle((x0, y0, x1, y1), fill=tuple(int(c * 0.55) for c in bg) + (255,))
+        bar = int((x1 - x0) * min(pct, 100) / 100)
         if bar:
-            d.rectangle((4, size - 9, 4 + bar, size - 5), fill=(255, 250, 242, 255))
+            d.rectangle((x0, y0, x0 + bar, y1), fill=(255, 250, 242, 255))
     return img
 
 
