@@ -126,6 +126,18 @@ class Icon(unittest.TestCase):
         for p in (None, 0, 50, 99, 140):
             self.assertEqual(app.render_icon(p).size, (64, 64))
         self.assertNotEqual(app.color_for(90, 85), app.color_for(10, 85))
+        for n in (16, 20, 24, 32):                                    # tray sizes are drawn natively
+            for p in (None, 7, 64, 100):
+                self.assertEqual(app.render_icon(p, size=n).size, (n, n))
+        self.assertNotEqual(app.color_for(10, 85, dark=True), app.color_for(10, 85))
+
+    def test_card_helpers(self):
+        from usage_tray import app, card
+        self.assertEqual([card.level(p, 85) for p in (None, 10, 70, 85, 100)], ['none', 'ok', 'near', 'warn', 'over'])
+        self.assertEqual(card.time_left(app.T['ko'], 72 * 60 + 30), '1시간 12분')
+        self.assertEqual(card.time_left(app.T['en'], 5 * 60), '5 min')
+        for t in app.T.values():                                      # both languages carry every key
+            self.assertEqual(set(t), set(app.T['en']))
 
     def test_last_reply(self):
         from usage_tray import app

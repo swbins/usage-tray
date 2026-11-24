@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pystray
 from PIL import Image, ImageDraw, ImageFont
 
-from . import hooks, usage
+from . import card, hooks, usage
 
 APP = 'Usage Tray'
 VERSION = '0.1.0'
@@ -42,6 +42,15 @@ T = {
         'hooks_ok': 'Hooks added. New Claude Code sessions will notify you.', 'hooks_gone': 'Hooks removed.',
         'hooks_err': 'Could not change ~/.claude/settings.json: {e}', 'running': 'Already running in the tray.',
         'about': 'Estimate from local Claude Code logs — nothing is sent anywhere.',
+        'open': 'Show usage', 'c_spine': 'Usage Tray', 'c_block': '5-hour block', 'c_reading': 'Reading logs…',
+        'c_cap_auto': 'tokens · auto limit', 'c_cap_set': 'tokens · your limit',
+        'c_reset': 'New block at {t} — {left} left', 'c_h': '{h} h {m} min', 'c_m': '{m} min',
+        'c_idle': 'Idle', 'c_idle_sub': 'No block running. Your next message starts one.',
+        'c_learning': 'No finished block to compare with yet — set a limit in Settings.',
+        'c_today': 'Today', 'c_week': 'Last 7 days', 'c_alerts': 'Alerts',
+        'c_a_limit': 'Warn at {p}%', 'c_a_done': 'Turn finished', 'c_a_ask': 'Needs you',
+        'c_a_phone': 'Phone (ntfy)', 'c_nohooks': 'Not connected to Claude Code yet — Settings › Notifications.',
+        'c_settings': 'Settings',
     },
     'ko': {
         'block': '5시간 구간 {pct} · {used} / {cap}{auto}', 'block_idle': '5시간 구간: 쉬는 중',
@@ -60,6 +69,15 @@ T = {
         'hooks_ok': '훅을 넣었어요. 새로 여는 Claude Code 세션부터 알려 줍니다.', 'hooks_gone': '훅을 뺐어요.',
         'hooks_err': '~/.claude/settings.json 을 못 바꿨어요: {e}', 'running': '이미 트레이에서 돌고 있어요.',
         'about': '이 PC 의 Claude Code 기록으로 낸 추정치 — 어디로도 보내지 않습니다.',
+        'open': '사용량 보기', 'c_spine': '한도살피기', 'c_block': '5시간 구간', 'c_reading': '기록 읽는 중…',
+        'c_cap_auto': '토큰 · 한도 자동', 'c_cap_set': '토큰 · 정한 한도',
+        'c_reset': '{t} 새 구간 — {left} 남음', 'c_h': '{h}시간 {m}분', 'c_m': '{m}분',
+        'c_idle': '쉬는 중', 'c_idle_sub': '지금 도는 구간이 없어요. 다음 메시지부터 새 구간입니다.',
+        'c_learning': '아직 견줄 지난 구간이 없어요 — 설정에서 한도를 정할 수 있어요.',
+        'c_today': '오늘', 'c_week': '최근 7일', 'c_alerts': '알림',
+        'c_a_limit': '{p}% 에서 한도 알림', 'c_a_done': '답을 끝내면', 'c_a_ask': '나를 기다리면',
+        'c_a_phone': '폰(ntfy)', 'c_nohooks': 'Claude Code 와 아직 연결 안 됨 — 설정 › 알림에서 연결',
+        'c_settings': '설정',
     },
 }
 
@@ -108,37 +126,61 @@ def _font(px):
     return ImageFont.load_default()
 
 
-def color_for(pct, alert):
-    if pct is None:
-        return (106, 97, 87)          # no estimate yet — grey
-    if pct >= 100:
-        return (180, 35, 24)          # red
-    if pct >= alert:
-        return (154, 63, 29)          # brick
-    if pct >= alert - 15:
-        return (138, 90, 18)          # ochre
-    return (43, 39, 35)               # ink
+PAPER = (250, 251, 247)               # spine.css --face2
+TILE = {'none': (98, 108, 92), 'ok': (47, 58, 58), 'near': (138, 100, 24), 'warn': (154, 63, 29),
+        'over': (180, 35, 24)}
+TILE_DARK_OK = (90, 109, 105)          # on a dark taskbar the ink tile turns into the dark-mode spine colour
 
 
-def render_icon(pct, alert=85, size=64):
-    """Square with the block percentage. Under it, a thin bar fills with the same number."""
+def color_for(pct, alert, dark=False):
+    """Tile colour: grey (no estimate) → ink → ochre → brick → red."""
+    lv = card.level(pct, alert)
+    return TILE_DARK_OK if (dark and lv == 'ok') else TILE[lv]
+
+
+def _font_small(px):
+    """Tahoma Bold is hinted for screen pixels, so 16-24 px digits stay sharp when drawn at that size."""
+    for name in ('tahomabd.ttf', 'segoeuib.ttf', 'arialbd.ttf', 'DejaVuSans-Bold.ttf'):
+        try:
+            return ImageFont.truetype(name, px)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def render_icon(pct, alert=85, size=64, dark=False):
+    """Tile with the block percentage; under it a thin bar fills with the same number.
+
+    Below 40 px everything sits on whole pixels and the digits are drawn at their real size
+    (not shrunk from a bigger picture), so the 16/20/24 px tray icon stays sharp."""
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    bg = color_for(pct, alert)
-    d.rounded_rectangle((0, 0, size - 1, size - 1), radius=size // 8, fill=bg + (255,))
+    bg = color_for(pct, alert, dark)
+    small = size < 40
+    d.rounded_rectangle((0, 0, size - 1, size - 1), radius=max(2, size // 9), fill=bg + (255,))
     txt = '–' if pct is None else ('!!' if pct >= 100 else str(int(pct)))
-    f = _font(int(size * (0.62 if len(txt) < 3 else 0.5)))
+    paper = PAPER + (255,)
+    if small:
+        mb = 1 if size < 18 else 2
+        bh = 2 if size < 20 else max(3, round(size * .1))
+    else:
+        mb, bh = round(size * .07), round(size * .11)
+    y1 = size - 1 - mb
+    y0 = y1 - bh + 1
+    x0, x1 = mb + (0 if small else round(size * .02)), size - 1 - mb - (0 if small else round(size * .02))
+    top = y0 - 1 if pct is not None else size
+    f = _font_small(round(size * .72)) if small else _font(int(size * (0.6 if len(txt) < 3 else 0.5)))
     box = d.textbbox((0, 0), txt, font=f)
     w, h = box[2] - box[0], box[3] - box[1]
-    d.text(((size - w) / 2 - box[0], (size * 0.86 - h) / 2 - box[1]), txt, font=f, fill=(255, 250, 242, 255))
+    tx, ty = (size - w) / 2 - box[0], (top - h) / 2 - box[1]
+    if small:
+        tx, ty = round(tx), round(ty)
+    d.text((tx, ty), txt, font=f, fill=paper)
     if pct is not None:
-        u = size / 64                                   # drawn at 64 px; scale margins and bar with the size
-        x0, x1 = round(4 * u), size - 1 - round(4 * u)
-        y0, y1 = size - round(9 * u), size - 1 - round(4 * u)
         d.rectangle((x0, y0, x1, y1), fill=tuple(int(c * 0.55) for c in bg) + (255,))
-        bar = int((x1 - x0) * min(pct, 100) / 100)
+        bar = round((x1 - x0 + 1) * min(pct, 100) / 100)
         if bar:
-            d.rectangle((x0, y0, x0 + bar, y1), fill=(255, 250, 242, 255))
+            d.rectangle((x0, y0, x0 + bar - 1, y1), fill=paper)
     return img
 
 
@@ -234,6 +276,39 @@ def ask_text(title, prompt, initial=''):
         root.destroy()
 
 
+# ---------------------------------------------------------------- tray icon
+class TrayIcon(pystray.Icon):
+    """pystray icon that hands Windows a picture drawn at the exact tray size (16/20/24 px…).
+
+    pystray would load one big picture and let Windows shrink it, which blurs the digits.
+    spec = (pct, alert, dark) is what render_icon() draws."""
+    spec = (None, 85, False)
+
+    if sys.platform == 'win32':
+        def _assert_icon_handle(self):
+            if self._icon_handle:
+                return
+            try:
+                import tempfile
+                from pystray._util import win32
+                n = ctypes.windll.user32.GetSystemMetrics(49) or 16          # SM_CXSMICON, DPI aware
+                fd, path = tempfile.mkstemp(suffix='.ico')
+                os.close(fd)
+                try:
+                    render_icon(*self.spec[:2], size=n, dark=self.spec[2]).save(path, format='ICO', sizes=[(n, n)])
+                    self._icon_handle = win32.LoadImage(None, path, win32.IMAGE_ICON, n, n, win32.LR_LOADFROMFILE)
+                finally:
+                    os.remove(path)
+            except Exception:
+                self._icon_handle = None
+            if not self._icon_handle:
+                super()._assert_icon_handle()
+
+    def set(self, pct, alert, dark):
+        self.spec = (pct, alert, dark)
+        self.icon = render_icon(pct, alert, dark=dark)
+
+
 # ---------------------------------------------------------------- app
 class App:
     def __init__(self):
@@ -243,13 +318,12 @@ class App:
         self.sum = None
         self.warned = {}               # block start -> highest level already warned
         self.wake = threading.Event()
-        self.icon = pystray.Icon('UsageTray', render_icon(None), APP, menu=self.menu())
+        self.card = None
+        self.icon = TrayIcon('UsageTray', render_icon(None), APP, menu=self.menu())
 
     # --- menu
     def menu(self):
         t, M, S = self.t, pystray.MenuItem, pystray.Menu.SEPARATOR
-        def line(fn):
-            return M(lambda _i: fn(), None, enabled=False)
         def setting(key):
             def flip(_i, _it):
                 self.s[key] = not self.s[key]
@@ -257,7 +331,7 @@ class App:
                 self.wake.set()
             return flip
         return pystray.Menu(
-            line(self.l_block), line(self.l_when), line(self.l_today), S,
+            M(t['open'], self.show_card, default=True), S,       # default = what a left-click does
             M(t['limit'], pystray.Menu(
                 M(lambda _i: t['limit_auto'].format(n=usage.short((self.sum or {}).get('auto_limit'))),
                   self.limit_auto, checked=lambda _i: not self.s['limit'], radio=True),
@@ -274,7 +348,30 @@ class App:
                 M(t['phone'], self.phone_ask))),
             M(t['startup'], self.toggle_startup, checked=lambda _i: startup_get(), visible=sys.platform == 'win32'),
             M(t['refresh'], lambda _i, _it: self.wake.set()),
-            S, line(lambda: t['about']), M(t['quit'], self.quit))
+            S, M(t['quit'], self.quit))
+
+    # --- card (left-click)
+    def card_data(self):
+        return {'sum': self.sum, 's': dict(self.s), 'hooks': hooks.installed()}
+
+    def show_card(self, _i=None, _it=None):
+        c = self.card
+        if c and not c.closed.is_set():
+            c.close()                                  # second click on the icon closes it
+            return
+        if c and time.time() - c.closed_at < 0.5:      # this click is the one that just closed it
+            return
+        self.card = card.Card(self.t, self.card_data, on_settings=self.open_menu, on_refresh=self.wake.set,
+                              lang=lang_of(self.s))
+        threading.Thread(target=self.card.run, daemon=True).start()
+
+    def open_menu(self):
+        """Pop the tray menu (settings) at the cursor — same as a right-click on the icon."""
+        try:
+            from pystray._util import win32
+            ctypes.windll.user32.PostMessageW(self.icon._hwnd, win32.WM_NOTIFY, 0, win32.WM_RBUTTONUP)
+        except Exception:
+            pass
 
     def l_block(self):
         s = self.sum
@@ -284,15 +381,6 @@ class App:
             return self.t['block_idle']
         return self.t['block'].format(pct='-' if s['pct'] is None else '%d%%' % s['pct'], used=usage.short(s['block_used']),
                                       cap=usage.short(s['limit']), auto=self.t['auto'] if s['limit_is_auto'] else '')
-
-    def l_when(self):
-        s = self.sum or {}
-        if not s.get('active'):
-            return '—'
-        txt = self.t['resets'].format(t=hhmm(s['resets_at']))
-        if s.get('hits_limit_at') and s['hits_limit_at'] < s['resets_at']:
-            txt += ' · ' + self.t['hits'].format(t=hhmm(s['hits_limit_at']))
-        return txt
 
     def l_today(self):
         s = self.sum or {}
@@ -391,7 +479,8 @@ class App:
                 recs = self.reader.refresh()
                 s = usage.summary(recs, self.s['limit'], self.s['cache_read'])
                 self.sum = s
-                self.icon.icon = render_icon(s['pct'] if s['active'] else (0 if s['limit'] else None), self.s['alert_pct'])
+                self.icon.set(s['pct'] if s['active'] else (0 if s['limit'] else None), self.s['alert_pct'],
+                              card.taskbar_dark())
                 tip = self.l_block() + '\n' + self.l_today()
                 self.icon.title = tip[:127]
                 self.icon.update_menu()
@@ -456,7 +545,45 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except Exception:
             pass
+    if '--preview' in sys.argv:
+        return preview(sys.argv[1:])
     return App().run()
+
+
+DEMO = {'active': True, 'block_used': 6_300_000, 'limit': 10_900_000, 'auto_limit': 10_900_000, 'limit_is_auto': True,
+        'pct': 58, 'today': 11_000_000, 'week': 84_100_000, 'per_min': 0, 'hits_limit_at': None}
+
+
+def preview(argv):
+    """Open just the card, without the tray or the hook port — for looking at the design and screenshots.
+
+        python -m usage_tray --preview [--demo [PCT|idle]] [--dark|--light] [--lang ko|en] [--scale 2] [--shot FILE.png]
+    """
+    def arg(name, default=None):
+        return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+    s = load_settings()
+    if arg('--lang') in T:
+        s['lang'] = arg('--lang')
+    t = T[lang_of(s)]
+    if '--demo' in argv:
+        summ = dict(DEMO)
+        p = arg('--demo')
+        if p == 'idle':
+            summ.update(active=False, pct=0, block_used=0)
+        elif p and p.isdigit():
+            summ['pct'] = int(p)
+            summ['block_used'] = summ['limit'] * int(p) // 100
+        summ['resets_at'] = time.time() + 72 * 60 + 30
+        if summ['active'] and 80 <= summ['pct'] < 100:
+            summ['hits_limit_at'] = time.time() + 40 * 60
+        data = {'sum': summ, 's': dict(s, notify_done=True, notify_ask=True, ntfy_topic=''), 'hooks': True}
+    else:
+        summ = usage.summary(usage.Reader().refresh(), s['limit'], s['cache_read'])
+        data = {'sum': summ, 's': s, 'hooks': hooks.installed()}
+    dark = True if '--dark' in argv else (False if '--light' in argv else None)
+    scale = float(arg('--scale')) if arg('--scale') else None
+    card.Card(t, lambda: data, dark=dark, lang=lang_of(s), scale=scale).run(shot=arg('--shot'))
+    return 0
 
 
 if __name__ == '__main__':
