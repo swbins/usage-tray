@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import card, hooks, usage
 
 APP = 'Usage Tray'
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 DIR = os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), 'UsageTray')
 F_SET = os.path.join(DIR, 'settings.json')
 DEFAULTS = {'limit': None, 'cache_read': False, 'alert_pct': 85, 'notify_done': True, 'notify_ask': True,
